@@ -213,13 +213,41 @@ async def screen_and_score_stocks(
     """
     filters = extract_persona_filters(user.persona_text)
 
-    # Get all followed stocks with their fundamentals
+    # 1. Get followed stocks
     result = await db.execute(
         select(Stock)
         .join(UserStock, Stock.id == UserStock.stock_id)
         .where(UserStock.user_id == user.id)
     )
-    stocks = result.scalars().all()
+    followed_stocks = list(result.scalars().all())
+
+    # 2. Get all existing stocks in DB to ensure broad recommendations
+    all_result = await db.execute(select(Stock))
+    db_stocks = list(all_result.scalars().all())
+
+    # Merge followed stocks first, then other DB stocks
+    stock_map = {s.id: s for s in followed_stocks}
+    for s in db_stocks:
+        if s.id not in stock_map:
+            stock_map[s.id] = s
+    
+    stocks = list(stock_map.values())
+
+    # 3. If DB has fewer than 10 stocks, auto-ingest top benchmark Indian tickers on the fly
+    if len(stocks) < 10:
+        from app.stocks.service import get_or_create_stock
+        benchmark_tickers = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "TATAMOTORS", "SBIN", "BHARTIARTL", "ITC", "LT"]
+        for t in benchmark_tickers:
+            if len(stocks) >= 10:
+                break
+            if not any(s.ticker == t for s in stocks):
+                try:
+                    s_obj = await get_or_create_stock(t, db)
+                    if s_obj and s_obj.id not in stock_map:
+                        stock_map[s_obj.id] = s_obj
+                        stocks.append(s_obj)
+                except Exception:
+                    pass
 
     scored = []
     for stock in stocks:
@@ -233,6 +261,7 @@ async def screen_and_score_stocks(
             continue
         if filters.get("min_roe") and (stock.roe or 0) < filters["min_roe"]:
             continue
+
 
         # Score based on factors (0–5 each)
         score = 0.0
