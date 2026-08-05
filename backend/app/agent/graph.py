@@ -89,7 +89,7 @@ async def run_agent(
 
     # Step 5: Screen stocks for recommendations
     if intent == "RECOMMENDATION":
-        scored_stocks = await screen_and_score_stocks(user, db)
+        scored_stocks = await screen_and_score_stocks(user, db, query=message)
 
     # Step 6: Generate response
     response, citations = await generate_cited_response(

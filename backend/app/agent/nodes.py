@@ -219,46 +219,66 @@ def grade_documents(docs: list[dict], threshold: float = 0.3) -> list[dict]:
 
 # ─── Node: Screen & Score Stocks ─────────────────────────────────────────────
 
+BENCHMARK_UNIVERSE = [
+    "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", 
+    "TATAMOTORS", "SBIN", "BHARTIARTL", "ITC", "LT", 
+    "AXISBANK", "SUNPHARMA", "MARUTI", "TITAN", "ULTRACEMCO",
+    "NTPC", "ONGC", "POWERGRID", "BAJFINANCE", "NESTLEIND",
+    "ASIANPAINT", "COALINDIA", "TATASTEEL", "JSWSTEEL", "M&M",
+    "ADANIENT", "ADANIPORTS", "GRASIM", "HEROMOTOCO", "HINDUNILVR",
+    "CIPLA", "DRREDDY", "DIVISLAB", "EICHERMOT", "APOLLOHOSP",
+    "BEL", "HAL", "TRENT", "ZOMATO", "SWIGGY",
+    "WIPRO", "TECHM", "HCLTECH", "BAJAJ-AUTO", "INDUSINDBK",
+    "KOTAKBANK", "BPCL", "IOC", "PIDILITIND", "VBL"
+]
+
 async def screen_and_score_stocks(
     user: User,
     db: AsyncSession,
+    query: str = "",
 ) -> list[dict]:
     """
-    Algorithmic stock screening against investor persona filters.
-    NO LLM calls — pure comparison logic. Fast and testable.
+    Algorithmic stock screening against investor persona, query intent, and news sentiment.
+    Dynamically extracts requested count (e.g. 20 stocks).
     """
+    # 1. Parse target stock count requested by user (e.g. "give 20 stocks")
+    target_count = 10
+    match = re.search(r'(\d+)\s*(?:stock|reccomednation|recommendation|pick|idea|option)', query.lower())
+    if match:
+        try:
+            target_count = int(match.group(1))
+            target_count = max(3, min(target_count, 30))  # Cap between 3 and 30
+        except ValueError:
+            target_count = 10
+
     filters = extract_persona_filters(user.persona_text)
+    query_lower = (query + " " + (user.persona_text or "")).lower()
 
-    # 1. Get followed stocks
-    result = await db.execute(
-        select(Stock)
-        .join(UserStock, Stock.id == UserStock.stock_id)
-        .where(UserStock.user_id == user.id)
-    )
-    followed_stocks = list(result.scalars().all())
+    # Dynamic Weighting based on query/persona style
+    is_short_term = any(w in query_lower for w in ["short time", "short term", "high risk", "margin", "momentum", "swing"])
+    is_dividend = any(w in query_lower for w in ["dividend", "passive income", "yield"])
+    is_value = any(w in query_lower for w in ["value", "low pe", "undervalued", "cheap"])
 
-    # 2. Get all existing stocks in DB to ensure broad recommendations
+    if is_short_term:
+        w_sentiment, w_roe, w_pe, w_debt, w_div = 0.40, 0.20, 0.20, 0.10, 0.10
+    elif is_dividend:
+        w_sentiment, w_roe, w_pe, w_debt, w_div = 0.20, 0.20, 0.10, 0.10, 0.40
+    elif is_value:
+        w_sentiment, w_roe, w_pe, w_debt, w_div = 0.20, 0.20, 0.40, 0.10, 0.10
+    else:  # Conservative / Quality default
+        w_sentiment, w_roe, w_pe, w_debt, w_div = 0.25, 0.30, 0.15, 0.20, 0.10
+
+    # 2. Get existing stocks in DB
     all_result = await db.execute(select(Stock))
-    db_stocks = list(all_result.scalars().all())
+    stocks = list(all_result.scalars().all())
+    stock_map = {s.id: s for s in stocks}
 
-    # Merge followed stocks first, then other DB stocks
-    stock_map = {s.id: s for s in followed_stocks}
-    for s in db_stocks:
-        if s.id not in stock_map:
-            stock_map[s.id] = s
-    
-    stocks = list(stock_map.values())
-
-    # 3. Auto-ingest benchmark Indian tickers to guarantee at least 12 stocks for screening
-    benchmark_tickers = [
-        "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", 
-        "TATAMOTORS", "SBIN", "BHARTIARTL", "ITC", "LT", 
-        "AXISBANK", "SUNPHARMA", "MARUTI", "TITAN", "ULTRACEMCO"
-    ]
-    if len(stocks) < 12:
+    # 3. Auto-ingest benchmark stocks from Yahoo/Screener if DB has fewer than needed
+    needed_count = max(target_count + 5, 25)
+    if len(stocks) < needed_count:
         from app.stocks.service import get_or_create_stock
-        for t in benchmark_tickers:
-            if len(stocks) >= 12:
+        for t in BENCHMARK_UNIVERSE:
+            if len(stocks) >= needed_count:
                 break
             if not any(s.ticker == t for s in stocks):
                 try:
@@ -272,33 +292,25 @@ async def screen_and_score_stocks(
     scored = []
     soft_scored = []
     for stock in stocks:
-        # Score based on factors (0–5 each)
-        score = 0.0
+        # Calculate component scores (0 to 5)
+        sent_part = ((stock.sentiment_score or 0.0) + 1.0) / 2.0 * 5.0
+        roe_part = min((stock.roe or 0.0) / 0.20, 5.0)
+        pe_part = max(0.0, 5.0 - (stock.pe_ratio or 20.0) / 10.0)
+        debt_part = max(0.0, 5.0 - (stock.debt_to_equity or 1.0))
+        div_part = min((stock.dividend_yield or 0.0) / 0.04, 5.0)
 
-        # ROE quality score
-        if stock.roe:
-            score += min(stock.roe / 0.20, 5.0) * 0.25  # 25% weight
-
-        # Dividend score (for dividend-focused personas)
-        if stock.dividend_yield:
-            score += min(stock.dividend_yield / 0.04, 5.0) * 0.20  # 20% weight
-
-        # P/E value score (lower P/E = higher score for value)
-        if stock.pe_ratio and stock.pe_ratio > 0:
-            score += max(0, 5 - stock.pe_ratio / 10) * 0.20  # 20% weight
-
-        # Sentiment score
-        if stock.sentiment_score is not None:
-            score += (stock.sentiment_score + 1) / 2 * 5 * 0.20  # 20% weight
-
-        # Debt safety score (lower D/E = better)
-        if stock.debt_to_equity is not None:
-            score += max(0, 5 - stock.debt_to_equity) * 0.15  # 15% weight
+        score = (
+            sent_part * w_sentiment +
+            roe_part * w_roe +
+            pe_part * w_pe +
+            debt_part * w_debt +
+            div_part * w_div
+        )
 
         item = {"stock": stock, "score": round(score, 3)}
         soft_scored.append(item)
 
-        # Check hard filters
+        # Apply hard filters if present
         passes_hard = True
         if filters.get("max_debt_to_equity") and stock.debt_to_equity:
             if stock.debt_to_equity > filters["max_debt_to_equity"]:
@@ -307,24 +319,21 @@ async def screen_and_score_stocks(
             passes_hard = False
         if filters.get("max_pe") and stock.pe_ratio and stock.pe_ratio > filters["max_pe"]:
             passes_hard = False
-        if filters.get("min_roe") and (stock.roe or 0) < filters["min_roe"]:
-            passes_hard = False
 
         if passes_hard:
             scored.append(item)
 
-    # If hard filters produced fewer than 10 stocks, top up with best scoring overall stocks
-    if len(scored) < 10:
+    # If hard filters produced fewer than target_count, top up with best soft-scored stocks
+    if len(scored) < target_count:
         soft_scored.sort(key=lambda x: x["score"], reverse=True)
         scored_ids = {x["stock"].id for x in scored}
         for item in soft_scored:
             if item["stock"].id not in scored_ids:
                 scored.append(item)
                 scored_ids.add(item["stock"].id)
-            if len(scored) >= 10:
+            if len(scored) >= target_count:
                 break
 
-    # Sort by score descending
     scored.sort(key=lambda x: x["score"], reverse=True)
     return scored
 
@@ -370,9 +379,14 @@ async def generate_cited_response(
     persona_summary = user.persona_text or f"Investor query: '{query}'. Provide balanced, quality Indian equity recommendations."
 
     if intent == "RECOMMENDATION" and scored_stocks:
-        # Build stock summary for recommendation
+        # Determine target count requested from query
+        match = re.search(r'(\d+)\s*(?:stock|reccomednation|recommendation|pick|idea|option)', query.lower())
+        count_req = int(match.group(1)) if match else 10
+        count_req = max(3, min(count_req, 30))
+        selected_stocks = scored_stocks[:count_req]
+
         stock_summaries = []
-        for item in scored_stocks[:10]:
+        for item in selected_stocks:
             s = item["stock"]
             score = item["score"]
             summary = (
@@ -386,6 +400,7 @@ async def generate_cited_response(
 
         stock_context = "\n".join(stock_summaries)
         prompt = RECOMMENDATION_PROMPT.format(
+            count=len(selected_stocks),
             persona=persona_summary,
             context=f"STOCK SCORES:\n{stock_context}\n\nNEWS & FUNDAMENTALS:\n{context}",
         )
