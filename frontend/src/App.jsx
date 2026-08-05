@@ -28,7 +28,6 @@ function AppRoutes() {
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
       <Route path="/chat" element={<ProtectedRoute><Research /></ProtectedRoute>} />
       <Route path="/research" element={<Navigate to="/chat" replace />} />
-      <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
   );

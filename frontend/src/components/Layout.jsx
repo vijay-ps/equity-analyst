@@ -5,7 +5,6 @@ import { useAuth } from '../lib/AuthContext';
 const NAV = [
   { to: '/dashboard', icon: '📊', label: 'Dashboard' },
   { to: '/chat',      icon: '💬', label: 'AI Chat' },
-  { to: '/analytics', icon: '📈', label: 'Sentiment' },
 ];
 
 

@@ -38,23 +38,16 @@ export default function Dashboard() {
 
   return (
     <Layout>
-      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div>
-          <h1 className="page-title">Your Watchlist</h1>
-          <p className="page-subtitle">
-            Follow NSE/BSE tickers to ingest their fundamentals &amp; news into your AI Chat brain.
-            {stocks.length > 0 && (
-              <span style={{ color: 'var(--teal)', marginLeft: 8 }}>
-                {stocks.length} stock{stocks.length !== 1 ? 's' : ''} tracked
-              </span>
-            )}
-          </p>
-        </div>
-        {stocks.length > 0 && (
-          <Link to="/analytics" className="btn btn-ghost btn-sm" style={{ marginTop: 4, fontSize: 12 }}>
-            📈 View Sentiment Charts →
-          </Link>
-        )}
+      <div className="page-header">
+        <h1 className="page-title">Your Watchlist</h1>
+        <p className="page-subtitle">
+          Follow NSE/BSE tickers to ingest their fundamentals &amp; news into your AI Chat brain.
+          {stocks.length > 0 && (
+            <span style={{ color: 'var(--teal)', marginLeft: 8 }}>
+              {stocks.length} stock{stocks.length !== 1 ? 's' : ''} tracked
+            </span>
+          )}
+        </p>
       </div>
 
 
