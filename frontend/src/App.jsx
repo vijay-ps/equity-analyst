@@ -5,7 +5,6 @@ import Login from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import Dashboard from './pages/Dashboard';
 import Research from './pages/Research';
-import Analytics from './pages/Analytics';
 import './index.css';
 
 function ProtectedRoute({ children }) {
