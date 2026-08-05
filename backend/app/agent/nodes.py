@@ -95,26 +95,42 @@ async def retrieve_documents(
         .where(UserStock.user_id == user.id)
     )
     followed = followed_result.fetchall()
+
+    # If user hasn't followed any stocks yet, query across all stocks in database
     if not followed:
-        return []
+        all_stocks_res = await db.execute(select(Stock.id, Stock.ticker))
+        followed = all_stocks_res.fetchall()
 
     followed_ids = [row[0] for row in followed]
-    followed_tickers = {row[0]: row[1] for row in followed}  # id→ticker
 
-    # If ticker filter specified, narrow down
+    # If ticker filter specified, search across matching stocks (ingest on fly if missing)
     if ticker_filter:
         ticker_filter_upper = [t.upper() for t in ticker_filter]
-        filtered_ids = [
-            row[0] for row in followed
-            if row[1].upper() in ticker_filter_upper
-        ]
-        if filtered_ids:
-            followed_ids = filtered_ids
+        matching_stocks_res = await db.execute(
+            select(Stock.id, Stock.ticker).where(func.upper(Stock.ticker).in_(ticker_filter_upper))
+        )
+        matching_rows = matching_stocks_res.fetchall()
+
+        # Auto-ingest missing requested tickers on the fly if needed
+        if len(matching_rows) < len(ticker_filter_upper):
+            from app.stocks.service import get_or_create_stock
+            for tf in ticker_filter_upper:
+                if not any(r[1].upper() == tf for r in matching_rows):
+                    try:
+                        s_obj = await get_or_create_stock(tf, db)
+                        if s_obj:
+                            matching_rows.append((s_obj.id, s_obj.ticker))
+                    except Exception:
+                        pass
+
+        if matching_rows:
+            followed_ids = [row[0] for row in matching_rows]
+
+    if not followed_ids:
+        return []
 
     # pgvector cosine similarity search
-    # Using 1 - (embedding <=> query_vec) for cosine similarity
-    from sqlalchemy import func, cast, Float
-    from sqlalchemy.dialects.postgresql import ARRAY
+    from sqlalchemy import func, Float
 
     query_str = (
         select(
