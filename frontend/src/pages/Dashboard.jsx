@@ -42,7 +42,7 @@ export default function Dashboard() {
         <div>
           <h1 className="page-title">Your Watchlist</h1>
           <p className="page-subtitle">
-            Follow NSE/BSE tickers to ingest their fundamentals &amp; news into your research brain.
+            Follow NSE/BSE tickers to ingest their fundamentals &amp; news into your AI Chat brain.
             {stocks.length > 0 && (
               <span style={{ color: 'var(--teal)', marginLeft: 8 }}>
                 {stocks.length} stock{stocks.length !== 1 ? 's' : ''} tracked

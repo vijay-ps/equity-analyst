@@ -57,59 +57,54 @@ export default function Research() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [threadId, setThreadId] = useState(null);
-  const [threads, setThreads] = useState([]);
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
 
-  // Load threads and active conversation on mount
-  const loadThreads = async () => {
-    try {
-      const data = await api.listThreads();
-      setThreads(data || []);
-      return data || [];
-    } catch (e) {
-      console.error(e);
-      return [];
-    }
-  };
-
+  // Initialize single persistent chat stream on mount
   useEffect(() => {
-    const initChat = async () => {
-      const existingThreads = await loadThreads();
-      const savedTid = localStorage.getItem('equity_active_thread_id');
+    const initSingleChat = async () => {
+      setLoading(true);
+      try {
+        const savedTid = localStorage.getItem('equity_active_thread_id');
+        const existingThreads = await api.listThreads();
+        
+        let tidToUse = savedTid;
 
-      if (savedTid && existingThreads.some(t => t.thread_id === savedTid)) {
-        selectThread(savedTid);
-      } else if (existingThreads.length > 0) {
-        selectThread(existingThreads[0].thread_id);
-      } else {
-        startNewChat();
+        // If saved thread ID is valid in existing threads, use it
+        if (savedTid && existingThreads.some(t => t.thread_id === savedTid)) {
+          tidToUse = savedTid;
+        } else if (existingThreads.length > 0) {
+          // Otherwise pick the user's existing chat thread
+          tidToUse = existingThreads[0].thread_id;
+        } else {
+          // Create a new single chat thread
+          const newRes = await api.newThread();
+          tidToUse = newRes.thread_id;
+        }
+
+        setThreadId(tidToUse);
+        localStorage.setItem('equity_active_thread_id', tidToUse);
+
+        // Fetch complete message history for refresh persistence
+        const history = await api.getHistory(tidToUse);
+        setMessages(history.messages || []);
+      } catch (e) {
+        console.error("Failed to load chat history:", e);
+      } finally {
+        setLoading(false);
       }
     };
-    initChat();
+
+    initSingleChat();
   }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const selectThread = async (tid) => {
+  const clearChatStream = async () => {
     if (loading) return;
-    setThreadId(tid);
-    localStorage.setItem('equity_active_thread_id', tid);
     setLoading(true);
-    try {
-      const history = await api.getHistory(tid);
-      setMessages(history.messages || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const startNewChat = async () => {
-    if (loading) return;
     try {
       const res = await api.newThread();
       setThreadId(res.thread_id);
@@ -117,9 +112,10 @@ export default function Research() {
       setMessages([]);
     } catch (e) {
       console.error(e);
+    } finally {
+      setLoading(false);
     }
   };
-
 
   const sendMessage = async (text) => {
     const msgText = text || input.trim();
@@ -154,8 +150,8 @@ export default function Research() {
       ]);
       if (response.thread_id && !threadId) {
         setThreadId(response.thread_id);
+        localStorage.setItem('equity_active_thread_id', response.thread_id);
       }
-      loadThreads();
     } catch (err) {
       setMessages(prev => [
         ...prev.filter(m => m.id !== typingId),
@@ -181,92 +177,45 @@ export default function Research() {
 
   return (
     <Layout>
-      <div style={{ display: 'flex', gap: 20, height: 'calc(100vh - 120px)' }}>
-        {/* Sidebar: Past Threads */}
-        <div style={{
-          width: 260,
-          flexShrink: 0,
-          background: 'rgba(255, 255, 255, 0.03)',
-          border: '1px solid var(--border-color)',
-          borderRadius: 16,
-          padding: 16,
-          display: 'flex',
-          flexDirection: 'column',
-          backdropFilter: 'blur(10px)',
-        }}>
-          <button
-            className="btn btn-primary"
-            onClick={startNewChat}
-            style={{ width: '100%', marginBottom: 16, justifyContent: 'center', gap: 8 }}
-          >
-            <span>+</span> New Research Session
-          </button>
-
-          <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', color: 'var(--text-muted)', marginBottom: 10, tracking: '0.05em' }}>
-            Past Conversations ({threads.length})
-          </div>
-
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {threads.length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', textAlign: 'center', marginTop: 20 }}>
-                No past sessions yet
-              </div>
-            ) : (
-              threads.map(t => {
-                const isActive = t.thread_id === threadId;
-                return (
-                  <button
-                    key={t.thread_id}
-                    onClick={() => selectThread(t.thread_id)}
-                    style={{
-                      textAlign: 'left',
-                      padding: '10px 12px',
-                      borderRadius: 8,
-                      border: '1px solid',
-                      borderColor: isActive ? 'var(--teal)' : 'transparent',
-                      background: isActive ? 'rgba(45, 212, 191, 0.1)' : 'rgba(255, 255, 255, 0.02)',
-                      color: isActive ? 'var(--teal)' : 'var(--text-color)',
-                      fontSize: 12,
-                      cursor: 'pointer',
-                      transition: 'all 0.15s ease',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    💬 {t.preview}
-                  </button>
-                );
-              })
-            )}
-          </div>
-        </div>
-
+      <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 120px)' }}>
         {/* Main Chat Container */}
-        <div className="chat-container" style={{ flex: 1 }}>
+        <div className="chat-container" style={{ flex: 1, width: '100%', maxWidth: 1000, margin: '0 auto' }}>
           {/* Header */}
-          <div className="page-header" style={{ paddingBottom: 16 }}>
-            <h1 className="page-title">AI Research Chat</h1>
-            <p className="page-subtitle">
-              Ask about fundamentals, sentiment, or say "Recommend stocks for my profile".
-              All answers cited &amp; in INR.
-            </p>
-            {user?.persona_text && (
-              <div style={{ marginTop: 10, fontSize: 13, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>🧠</span>
-                <span>Profile: {user.persona_text.slice(0, 120)}{user.persona_text.length > 120 ? '…' : ''}</span>
-              </div>
+          <div className="page-header" style={{ paddingBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <h1 className="page-title">AI Chat</h1>
+              <p className="page-subtitle">
+                Ask about fundamentals, sentiment, or say "Recommend stocks for my profile".
+                All answers cited &amp; in INR.
+              </p>
+              {user?.persona_text && (
+                <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span>🧠</span>
+                  <span>Investor Profile: {user.persona_text.slice(0, 120)}{user.persona_text.length > 120 ? '…' : ''}</span>
+                </div>
+              )}
+            </div>
+
+            {messages.length > 0 && (
+              <button
+                className="btn btn-ghost btn-sm"
+                onClick={clearChatStream}
+                title="Clear Chat Stream"
+                style={{ marginTop: 4, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}
+              >
+                <span>🗑️</span> Clear Chat
+              </button>
             )}
           </div>
 
           {/* Messages */}
           <div className="chat-messages">
             {messages.length === 0 && (
-              <div className="empty-state" style={{ padding: '32px 0' }}>
+              <div className="empty-state" style={{ padding: '40px 0' }}>
                 <div className="icon">💬</div>
-                <h3>Start your research session</h3>
+                <h3>Start your AI Chat session</h3>
                 <p>Ask anything about your followed stocks, or tell me about your investment style.</p>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 20 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 24 }}>
                   {SUGGESTIONS.map(s => (
                     <button
                       key={s}

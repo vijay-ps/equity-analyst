@@ -4,7 +4,7 @@ import { useAuth } from '../lib/AuthContext';
 
 const NAV = [
   { to: '/dashboard', icon: '📊', label: 'Dashboard' },
-  { to: '/research',  icon: '🤖', label: 'AI Research' },
+  { to: '/chat',      icon: '💬', label: 'AI Chat' },
   { to: '/analytics', icon: '📈', label: 'Sentiment' },
 ];
 
@@ -19,7 +19,7 @@ export default function Layout({ children }) {
           <div className="logo-icon">📈</div>
           <div>
             <div className="logo-text">Equity AI</div>
-            <div className="logo-sub">NSE · BSE Research</div>
+            <div className="logo-sub">NSE · BSE AI Chat</div>
           </div>
         </div>
 

@@ -26,7 +26,8 @@ function AppRoutes() {
       <Route path="/login" element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
       <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-      <Route path="/research" element={<ProtectedRoute><Research /></ProtectedRoute>} />
+      <Route path="/chat" element={<ProtectedRoute><Research /></ProtectedRoute>} />
+      <Route path="/research" element={<Navigate to="/chat" replace />} />
       <Route path="/analytics" element={<ProtectedRoute><Analytics /></ProtectedRoute>} />
       <Route path="*" element={<Navigate to="/dashboard" replace />} />
     </Routes>
