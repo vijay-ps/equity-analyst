@@ -61,19 +61,32 @@ export default function Research() {
   const bottomRef = useRef(null);
   const textareaRef = useRef(null);
 
-  // Load threads on mount
+  // Load threads and active conversation on mount
   const loadThreads = async () => {
     try {
       const data = await api.listThreads();
       setThreads(data || []);
+      return data || [];
     } catch (e) {
       console.error(e);
+      return [];
     }
   };
 
   useEffect(() => {
-    api.newThread().then(r => setThreadId(r.thread_id)).catch(console.error);
-    loadThreads();
+    const initChat = async () => {
+      const existingThreads = await loadThreads();
+      const savedTid = localStorage.getItem('equity_active_thread_id');
+
+      if (savedTid && existingThreads.some(t => t.thread_id === savedTid)) {
+        selectThread(savedTid);
+      } else if (existingThreads.length > 0) {
+        selectThread(existingThreads[0].thread_id);
+      } else {
+        startNewChat();
+      }
+    };
+    initChat();
   }, []);
 
   useEffect(() => {
@@ -83,6 +96,7 @@ export default function Research() {
   const selectThread = async (tid) => {
     if (loading) return;
     setThreadId(tid);
+    localStorage.setItem('equity_active_thread_id', tid);
     setLoading(true);
     try {
       const history = await api.getHistory(tid);
@@ -99,11 +113,13 @@ export default function Research() {
     try {
       const res = await api.newThread();
       setThreadId(res.thread_id);
+      localStorage.setItem('equity_active_thread_id', res.thread_id);
       setMessages([]);
     } catch (e) {
       console.error(e);
     }
   };
+
 
   const sendMessage = async (text) => {
     const msgText = text || input.trim();
