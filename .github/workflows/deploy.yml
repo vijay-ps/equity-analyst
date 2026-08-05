@@ -5,9 +5,13 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: deploy-ecs-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   AWS_REGION: ap-south-1
+
   PROJECT: equity-analyst
 
 jobs:
