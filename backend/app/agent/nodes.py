@@ -157,7 +157,41 @@ async def retrieve_documents(
             "similarity": float(similarity),
         })
 
+    # If no vector docs found, generate fundamental fallback docs directly from Stock table metrics
+    if not docs and followed_ids:
+        stock_query = select(Stock).where(Stock.id.in_(followed_ids))
+        stock_res = await db.execute(stock_query)
+        target_stocks = stock_res.scalars().all()
+        for stock in target_stocks:
+            fund_text = (
+                f"Fundamental metrics for {stock.ticker} ({stock.name or 'N/A'}):\n"
+                f"- Price: Rs. {stock.last_price or 'N/A'}\n"
+                f"- Market Cap: Rs. {stock.market_cap or 'N/A'}\n"
+                f"- P/E Ratio: {stock.pe_ratio or 'N/A'}\n"
+                f"- P/B Ratio: {stock.pb_ratio or 'N/A'}\n"
+                f"- Debt to Equity: {stock.debt_to_equity or 'N/A'}\n"
+                f"- Dividend Yield: {(stock.dividend_yield or 0)*100:.2f}%\n"
+                f"- ROE: {(stock.roe or 0)*100:.2f}%\n"
+                f"- Sector: {stock.sector or 'N/A'}, Industry: {stock.industry or 'N/A'}\n"
+            )
+            docs.append({
+                "id": stock.id,
+                "ticker": stock.ticker,
+                "company": stock.name or stock.ticker,
+                "source_type": "fundamentals",
+                "source_name": "Stock Fundamentals Database",
+                "source_url": "",
+                "title": f"{stock.ticker} Stock Fundamentals",
+                "chunk_text": fund_text,
+                "sentiment": "neutral",
+                "sentiment_score": stock.sentiment_score or 0.0,
+                "event_type": "fundamentals",
+                "published_at": None,
+                "similarity": 0.8,
+            })
+
     return docs
+
 
 
 # ─── Node: Grade Relevance ───────────────────────────────────────────────────
