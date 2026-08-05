@@ -5,6 +5,7 @@ on:
     branches: [main]
   workflow_dispatch:
 
+
 env:
   AWS_REGION: ap-south-1
   PROJECT: equity-analyst
