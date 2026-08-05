@@ -109,6 +109,54 @@ async def follow_stock(user: User, ticker: str, db: AsyncSession) -> Optional[St
         db.add(user_stock)
         await db.flush()
 
+    # Trigger background news ingestion with advisory lock
+    from app.ingestion.news import acquire_ticker_advisory_lock, release_ticker_advisory_lock, fetch_all_feeds_for_ticker
+    from app.ingestion.embedder import embed_documents
+    from app.ingestion.chunker import chunk_text
+    from app.models import Document
+
+    async def _ingest_news_bg():
+        try:
+            got_lock = await acquire_ticker_advisory_lock(stock.ticker, db)
+            if not got_lock:
+                return
+            articles = await fetch_all_feeds_for_ticker(stock.ticker)
+            if not articles:
+                return
+            
+            # Write news chunks to database
+            for art in articles[:10]:
+                content_text = art.get("full_text") or art.get("summary") or art.get("title")
+                chunks = chunk_text(content_text, chunk_size=500, overlap=50)
+                if not chunks:
+                    continue
+                
+                # Check hash for deduplication
+                existing = await db.execute(
+                    select(Document).where(Document.content_hash == art["content_hash"])
+                )
+                if existing.scalar_one_or_none():
+                    continue
+
+                for c in chunks:
+                    doc = Document(
+                        stock_id=stock.id,
+                        source_type="rss",
+                        source_name=art["source_name"],
+                        source_url=art["source_url"],
+                        title=art["title"],
+                        chunk_text=c,
+                        content_hash=art["content_hash"],
+                        published_at=art.get("published_at"),
+                    )
+                    db.add(doc)
+            await db.commit()
+        except Exception:
+            pass
+        finally:
+            await release_ticker_advisory_lock(stock.ticker, db)
+
+    asyncio.create_task(_ingest_news_bg())
     return stock
 
 

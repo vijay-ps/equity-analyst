@@ -11,7 +11,8 @@ from email.utils import parsedate_to_datetime
 
 import feedparser
 import httpx
-from bs4 import BeautifulSoup
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Indian financial news RSS feeds
 NEWS_FEEDS = [
@@ -68,6 +69,25 @@ COMPANY_ALIASES: dict[str, list[str]] = {
     "JSWSTEEL": ["JSW Steel"],
     "ULTRACEMCO": ["UltraTech Cement", "UltraTech"],
 }
+
+
+async def acquire_ticker_advisory_lock(ticker: str, db: AsyncSession) -> bool:
+    """Acquire a Postgres advisory lock for a ticker to prevent concurrent ingestion races."""
+    try:
+        lock_id = int(hashlib.md5(ticker.encode("utf-8")).hexdigest()[:8], 16) % (2**31 - 1)
+        res = await db.execute(text("SELECT pg_try_advisory_lock(:id)"), {"id": lock_id})
+        return bool(res.scalar())
+    except Exception:
+        return True  # Fallback if DB doesn't support advisory locks
+
+
+async def release_ticker_advisory_lock(ticker: str, db: AsyncSession):
+    """Release Postgres advisory lock for a ticker."""
+    try:
+        lock_id = int(hashlib.md5(ticker.encode("utf-8")).hexdigest()[:8], 16) % (2**31 - 1)
+        await db.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": lock_id})
+    except Exception:
+        pass
 
 
 def find_tickers_in_text(text: str) -> list[str]:
