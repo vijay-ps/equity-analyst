@@ -10,8 +10,41 @@ from datetime import datetime, timezone
 from app.models import Stock
 
 
+import requests
+from bs4 import BeautifulSoup
+
+def _fetch_screener_sync(ticker: str) -> dict:
+    """Fallback / enrichment fundamentals scraper from Screener.in."""
+    try:
+        clean_symbol = ticker.split(".")[0].upper()
+        url = f"https://www.screener.in/company/{clean_symbol}/consolidated/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        resp = requests.get(url, headers=headers, timeout=6)
+        if resp.status_code != 200:
+            url = f"https://www.screener.in/company/{clean_symbol}/"
+            resp = requests.get(url, headers=headers, timeout=6)
+            if resp.status_code != 200:
+                return {}
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        ratios = {}
+        # Parse top key ratios from Screener.in
+        for item in soup.select("#top-ratios li"):
+            name_el = item.select_one(".name")
+            value_el = item.select_one(".value")
+            if name_el and value_el:
+                name = name_el.get_text(strip=True).lower()
+                val = value_el.get_text(strip=True).replace(",", "").replace("%", "").strip()
+                ratios[name] = val
+        return ratios
+    except Exception:
+        return {}
+
+
 def _fetch_fundamentals_sync(ticker_ns: str) -> dict:
-    """Blocking yfinance call — run in executor."""
+    """Blocking yfinance call enriched with Screener.in — run in executor."""
     try:
         yf_stock = yf.Ticker(ticker_ns)
         info = yf_stock.info or {}
@@ -29,6 +62,40 @@ def _fetch_fundamentals_sync(ticker_ns: str) -> dict:
             total_revenue = None
             net_income = None
 
+        # Fetch Screener.in fallback / enrichment metrics
+        screener_data = _fetch_screener_sync(ticker_ns)
+
+        pe = info.get("trailingPE")
+        if pe is None and "stock p/e" in screener_data:
+            try:
+                pe = float(screener_data["stock p/e"])
+            except ValueError:
+                pass
+
+        pb = info.get("priceToBook")
+        if pb is None and "book value" in screener_data and (last_price or info.get("currentPrice")):
+            try:
+                bv = float(screener_data["book value"])
+                price = last_price or info.get("currentPrice")
+                if bv > 0 and price:
+                    pb = round(price / bv, 2)
+            except ValueError:
+                pass
+
+        roe = info.get("returnOnEquity")
+        if roe is None and "roe" in screener_data:
+            try:
+                roe = float(screener_data["roe"]) / 100.0
+            except ValueError:
+                pass
+
+        div_yield = info.get("dividendYield")
+        if div_yield is None and "dividend yield" in screener_data:
+            try:
+                div_yield = float(screener_data["dividend yield"]) / 100.0
+            except ValueError:
+                pass
+
         return {
             "ticker_ns": ticker_ns,
             "name": info.get("longName") or info.get("shortName"),
@@ -41,13 +108,13 @@ def _fetch_fundamentals_sync(ticker_ns: str) -> dict:
             "week_52_high": info.get("fiftyTwoWeekHigh"),
             "week_52_low": info.get("fiftyTwoWeekLow"),
             # Valuation
-            "pe_ratio": info.get("trailingPE"),
+            "pe_ratio": pe,
             "forward_pe": info.get("forwardPE"),
-            "pb_ratio": info.get("priceToBook"),
+            "pb_ratio": pb,
             "ps_ratio": info.get("priceToSalesTrailing12Months"),
             "ev_ebitda": info.get("enterpriseToEbitda"),
             # Profitability
-            "roe": info.get("returnOnEquity"),
+            "roe": roe,
             "roa": info.get("returnOnAssets"),
             "profit_margin": info.get("profitMargins"),
             "operating_margin": info.get("operatingMargins"),
@@ -62,7 +129,7 @@ def _fetch_fundamentals_sync(ticker_ns: str) -> dict:
             "revenue_growth": info.get("revenueGrowth"),
             "earnings_growth": info.get("earningsGrowth"),
             # Dividends
-            "dividend_yield": info.get("dividendYield"),
+            "dividend_yield": div_yield,
             "dividend_rate": info.get("dividendRate"),
             "payout_ratio": info.get("payoutRatio"),
             # Misc
@@ -72,6 +139,7 @@ def _fetch_fundamentals_sync(ticker_ns: str) -> dict:
             "description": info.get("longBusinessSummary"),
             "website": info.get("website"),
             "employees": info.get("fullTimeEmployees"),
+            "screener_ratios": screener_data,
             "fetched_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as e:
@@ -79,9 +147,10 @@ def _fetch_fundamentals_sync(ticker_ns: str) -> dict:
 
 
 async def fetch_fundamentals(ticker_ns: str) -> dict:
-    """Async wrapper for yfinance fetch."""
+    """Async wrapper for yfinance + Screener.in fetch."""
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, _fetch_fundamentals_sync, ticker_ns)
+
 
 
 def fundamentals_to_chunks(data: dict, ticker: str) -> list[str]:
