@@ -233,12 +233,16 @@ async def screen_and_score_stocks(
     
     stocks = list(stock_map.values())
 
-    # 3. If DB has fewer than 10 stocks, auto-ingest top benchmark Indian tickers on the fly
-    if len(stocks) < 10:
+    # 3. Auto-ingest benchmark Indian tickers to guarantee at least 12 stocks for screening
+    benchmark_tickers = [
+        "RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", 
+        "TATAMOTORS", "SBIN", "BHARTIARTL", "ITC", "LT", 
+        "AXISBANK", "SUNPHARMA", "MARUTI", "TITAN", "ULTRACEMCO"
+    ]
+    if len(stocks) < 12:
         from app.stocks.service import get_or_create_stock
-        benchmark_tickers = ["RELIANCE", "TCS", "INFY", "HDFCBANK", "ICICIBANK", "TATAMOTORS", "SBIN", "BHARTIARTL", "ITC", "LT"]
         for t in benchmark_tickers:
-            if len(stocks) >= 10:
+            if len(stocks) >= 12:
                 break
             if not any(s.ticker == t for s in stocks):
                 try:
@@ -250,19 +254,8 @@ async def screen_and_score_stocks(
                     pass
 
     scored = []
+    soft_scored = []
     for stock in stocks:
-        # Apply hard filters
-        if filters.get("max_debt_to_equity") and stock.debt_to_equity:
-            if stock.debt_to_equity > filters["max_debt_to_equity"]:
-                continue
-        if filters.get("min_dividend_yield") and (stock.dividend_yield or 0) < filters["min_dividend_yield"]:
-            continue
-        if filters.get("max_pe") and stock.pe_ratio and stock.pe_ratio > filters["max_pe"]:
-            continue
-        if filters.get("min_roe") and (stock.roe or 0) < filters["min_roe"]:
-            continue
-
-
         # Score based on factors (0–5 each)
         score = 0.0
 
@@ -286,10 +279,34 @@ async def screen_and_score_stocks(
         if stock.debt_to_equity is not None:
             score += max(0, 5 - stock.debt_to_equity) * 0.15  # 15% weight
 
-        scored.append({
-            "stock": stock,
-            "score": round(score, 3),
-        })
+        item = {"stock": stock, "score": round(score, 3)}
+        soft_scored.append(item)
+
+        # Check hard filters
+        passes_hard = True
+        if filters.get("max_debt_to_equity") and stock.debt_to_equity:
+            if stock.debt_to_equity > filters["max_debt_to_equity"]:
+                passes_hard = False
+        if filters.get("min_dividend_yield") and (stock.dividend_yield or 0) < filters["min_dividend_yield"]:
+            passes_hard = False
+        if filters.get("max_pe") and stock.pe_ratio and stock.pe_ratio > filters["max_pe"]:
+            passes_hard = False
+        if filters.get("min_roe") and (stock.roe or 0) < filters["min_roe"]:
+            passes_hard = False
+
+        if passes_hard:
+            scored.append(item)
+
+    # If hard filters produced fewer than 10 stocks, top up with best scoring overall stocks
+    if len(scored) < 10:
+        soft_scored.sort(key=lambda x: x["score"], reverse=True)
+        scored_ids = {x["stock"].id for x in scored}
+        for item in soft_scored:
+            if item["stock"].id not in scored_ids:
+                scored.append(item)
+                scored_ids.add(item["stock"].id)
+            if len(scored) >= 10:
+                break
 
     # Sort by score descending
     scored.sort(key=lambda x: x["score"], reverse=True)
@@ -334,7 +351,7 @@ async def generate_cited_response(
         })
 
     context = "\n---\n".join(context_parts)
-    persona_summary = user.persona_text or "No investor profile set yet."
+    persona_summary = user.persona_text or f"Investor query: '{query}'. Provide balanced, quality Indian equity recommendations."
 
     if intent == "RECOMMENDATION" and scored_stocks:
         # Build stock summary for recommendation

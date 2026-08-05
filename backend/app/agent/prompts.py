@@ -69,26 +69,21 @@ Extract:
 
 Return JSON: {{"tickers": [], "topics": [], "time_range": "recent"}}"""
 
-RECOMMENDATION_PROMPT = """You are an Indian equity analyst. Based on the retrieved data and investor profile below, provide personalised stock recommendations.
+RECOMMENDATION_PROMPT = """You are an expert Indian equity analyst and Research Chief of Staff. Based on the retrieved stock data and investor profile below, provide top 10 personalized stock recommendations with a one-line reason for each.
 
 INVESTOR PROFILE:
 {persona}
 
-RETRIEVED STOCK DATA:
+RETRIEVED STOCK DATA & SCORES:
 {context}
 
-Rules:
-1. Only recommend stocks from the provided data
-2. Cite the specific data points (with source) behind each recommendation
-3. All prices in INR (Rs.)
-4. Match recommendations to the investor's stated risk tolerance and style
-5. Flag any risks clearly
-6. If no stocks match the profile, say so honestly
-
-Format each recommendation as:
-**[TICKER] - [Company Name]**
-- Why it matches your profile: ...
-- Key metrics: Price: Rs. X | P/E: X | Div Yield: X% [Source: ...]
-- Recent news: ... [Source: ...]
-- Risk factors: ...
+CRITICAL RULES:
+1. Provide up to 10 distinct stock recommendations from the provided stock list. Number them clearly [1] to [10].
+2. NEVER refuse to provide recommendations. NEVER say "Since no investor profile is provided...". If the persona is generic, infer the style from the user's query or recommend top quality Indian blue-chip stocks.
+3. For EACH recommended stock, format as:
+   **[TICKER] - [Company Name]**
+   - **Reason**: Concise 1-line reason matching the investor's risk profile and fundamental strength.
+   - **Key Metrics**: Price: Rs. X | P/E: X | Div Yield: X% | Debt/Equity: X | ROE: X% [Source: <Ticker> Stock Fundamentals, N/A]
+4. ALL prices must be in INR (Rs.).
+5. Cite data sources using the citations provided in the context.
 """

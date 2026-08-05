@@ -58,11 +58,12 @@ async def run_agent(
     citations = []
     response = ""
 
-    # Step 3: Persona update (if applicable)
-    if intent == "PERSONA_UPDATE":
-        persona_updated = await update_user_persona(user, message, db)
+    # Step 3: Always check and update user persona if preferences are mentioned in query
+    persona_updated = await update_user_persona(user, message, db)
+    if persona_updated:
         await db.flush()
 
+    if intent == "PERSONA_UPDATE":
         # Still retrieve docs to ground the acknowledgement
         docs = await retrieve_documents(message, user, db, k=3)
         graded = grade_documents(docs, threshold=0.25)
