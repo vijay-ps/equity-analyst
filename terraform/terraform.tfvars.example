@@ -1,0 +1,16 @@
+aws_region = "ap-south-1"
+
+# DB credentials
+db_username = "equity_user"
+db_password = "CHANGE_ME_SECURE_PASSWORD"
+db_name     = "equity_db"
+
+# API Keys (DO NOT commit real values)
+groq_api_key         = "gsk_..."
+google_client_id     = "35232388850-....apps.googleusercontent.com"
+google_client_secret = "GOCSPX-..."
+jwt_secret           = "generate-a-random-64-char-string"
+
+# AWS credentials (prefer IAM roles in production)
+aws_access_key = "AKIAIOSFODNN7EXAMPLE"
+aws_secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"

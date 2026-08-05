@@ -1,0 +1,171 @@
+name: 🚀 Deploy to AWS ECS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+  PROJECT: equity-analyst
+
+jobs:
+  # ─── Job 1: Run Tests ────────────────────────────────────────────────────
+  test:
+    name: 🧪 Test Backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: equity_user
+          POSTGRES_PASSWORD: equity_pass
+          POSTGRES_DB: equity_db_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install backend deps
+        run: pip install -r requirements.txt
+        working-directory: ./backend
+
+      - name: Run syntax check
+        run: python -m py_compile app/main.py app/config.py app/models.py
+        working-directory: ./backend
+
+      - name: Health check imports
+        run: |
+          python -c "from app.config import get_settings; s=get_settings(); print('Config OK')"
+        working-directory: ./backend
+        env:
+          DATABASE_URL: postgresql+asyncpg://equity_user:equity_pass@localhost:5432/equity_db_test
+          DATABASE_URL_SYNC: postgresql+psycopg2://equity_user:equity_pass@localhost:5432/equity_db_test
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          JWT_SECRET: test-secret-for-ci
+
+  # ─── Job 2: Build & Push Docker Images ───────────────────────────────────
+  build:
+    name: 🐳 Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    outputs:
+      backend_image: ${{ steps.backend-meta.outputs.image }}
+      frontend_image: ${{ steps.frontend-meta.outputs.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Get ECR registry
+        id: ecr
+        run: echo "REGISTRY=${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_ENV
+
+      - name: Build & Push Backend
+        id: backend-meta
+        run: |
+          IMAGE="${REGISTRY}/${PROJECT}-backend:${{ github.sha }}"
+          docker build -t $IMAGE ./backend
+          docker push $IMAGE
+          docker tag $IMAGE "${REGISTRY}/${PROJECT}-backend:latest"
+          docker push "${REGISTRY}/${PROJECT}-backend:latest"
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+      - name: Build & Push Frontend
+        id: frontend-meta
+        run: |
+          IMAGE="${REGISTRY}/${PROJECT}-frontend:${{ github.sha }}"
+          docker build \
+            --build-arg VITE_API_URL="" \
+            -t $IMAGE ./frontend
+          docker push $IMAGE
+          docker tag $IMAGE "${REGISTRY}/${PROJECT}-frontend:latest"
+          docker push "${REGISTRY}/${PROJECT}-frontend:latest"
+          echo "image=$IMAGE" >> $GITHUB_OUTPUT
+
+  # ─── Job 3: Deploy to ECS ────────────────────────────────────────────────
+  deploy:
+    name: 🚢 Deploy to ECS Fargate
+    runs-on: ubuntu-latest
+    needs: build
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Run DB migrations via ECS Task
+        run: |
+          aws ecs run-task \
+            --cluster ${PROJECT}-cluster \
+            --task-definition ${PROJECT}-backend \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[${{ secrets.PRIVATE_SUBNET_ID }}],securityGroups=[${{ secrets.ECS_SG_ID }}],assignPublicIp=DISABLED}" \
+            --overrides '{"containerOverrides":[{"name":"backend","command":["python","-m","alembic","upgrade","head"]}]}' \
+            --count 1 \
+            --wait-task-completion
+        continue-on-error: true
+
+      - name: Update Backend ECS Service
+        run: |
+          aws ecs update-service \
+            --cluster ${PROJECT}-cluster \
+            --service ${PROJECT}-backend \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Update Frontend ECS Service
+        run: |
+          aws ecs update-service \
+            --cluster ${PROJECT}-cluster \
+            --service ${PROJECT}-frontend \
+            --force-new-deployment \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for backend stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${PROJECT}-cluster \
+            --services ${PROJECT}-backend \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Wait for frontend stability
+        run: |
+          aws ecs wait services-stable \
+            --cluster ${PROJECT}-cluster \
+            --services ${PROJECT}-frontend \
+            --region ${{ env.AWS_REGION }}
+
+      - name: 🎉 Deployment Complete
+        run: |
+          echo "✅ Deployed backend: ${{ needs.build.outputs.backend_image }}"
+          echo "✅ Deployed frontend: ${{ needs.build.outputs.frontend_image }}"
+          echo "🌐 App URL: http://$(aws elbv2 describe-load-balancers --names ${PROJECT}-alb --query 'LoadBalancers[0].DNSName' --output text)"

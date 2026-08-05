@@ -1,0 +1,58 @@
+services:
+
+  # ── PostgreSQL with pgvector ──────────────────────────────────────────────
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: equity_db
+    environment:
+      POSTGRES_USER: equity_user
+      POSTGRES_PASSWORD: equity_pass
+      POSTGRES_DB: equity_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U equity_user -d equity_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Backend (FastAPI) ─────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: equity_backend
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://equity_user:equity_pass@db:5432/equity_db
+      DATABASE_URL_SYNC: postgresql+psycopg2://equity_user:equity_pass@db:5432/equity_db
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+      - model_cache:/root/.cache/torch
+    restart: unless-stopped
+
+  # ── Frontend (React/Vite served by nginx) ─────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: equity_frontend
+    ports:
+      - "5173:80"
+    environment:
+      VITE_API_URL: http://localhost:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  model_cache:
