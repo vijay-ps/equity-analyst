@@ -36,8 +36,7 @@ Services start at:
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/)
 2. Open **APIs & Services → OAuth consent screen**
-3. Add test users: `harisankar@sentellent.com`, `naga@sentellent.com`
-4. Under **Credentials → OAuth 2.0 Client IDs**, add:
+3. Under **Credentials → OAuth 2.0 Client IDs**, add:
    - Authorized JS origins: `http://localhost:5173`
    - Authorized redirect URIs: `http://localhost:8000/api/auth/callback`
 
