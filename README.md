@@ -3,8 +3,6 @@
 > A production-ready, cloud-deployed RAG-based equity research assistant for NSE/BSE stocks.
 > Built on LangGraph + FastAPI + React + PostgreSQL/pgvector + AWS ECS Fargate.
 
-[![Deploy to AWS](https://github.com/YOUR_USERNAME/equity-analyst/actions/workflows/deploy.yml/badge.svg)](https://github.com/YOUR_USERNAME/equity-analyst/actions/workflows/deploy.yml)
-
 ---
 
 ## 🚀 Quick Start (Local Dev)
